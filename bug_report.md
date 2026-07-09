@@ -26,7 +26,7 @@ This report outlines the bugs identified based on the API contract specified in 
 - **Impact:** Users could create zero-hour or negative-duration bookings, leading to zero or negative pricing calculations.
 - **Fix:** Validation was added to reject `end <= start`, strictly enforcing `1 <= duration_hours <= 8`.
 
-## 4\. Back-to-back bookings are treated as conflicts
+## 4. Back-to-back bookings are treated as conflicts
 
 <<<<<<< Updated upstream
 - Files/lines: `app/routers/bookings.py:42-51`  
@@ -41,7 +41,7 @@ This report outlines the bugs identified based on the API contract specified in 
 - **Fix:** Implemented strict overlap boundaries per the specification: `existing.start_time < new_end and new_start < existing.end_time`.
 >>>>>>> Stashed changes
 
-## 5\. Double-booking protection is not concurrency-safe
+## 5. Double-booking protection is not concurrency-safe
 
 <<<<<<< Updated upstream
 - Files/lines: `app/routers/bookings.py:42-52`, `app/routers/bookings.py:100-118`, `app/models.py:46-57`  
@@ -56,7 +56,7 @@ This report outlines the bugs identified based on the API contract specified in 
 - **Fix:** Booking creation is now serialized per room and time range. The conflict check and subsequent insert are executed atomically within a database transaction.
 >>>>>>> Stashed changes
 
-## 6\. Quota enforcement is not concurrency-safe
+## 6. Quota enforcement is not concurrency-safe
 
 <<<<<<< Updated upstream
 - Files/lines: `app/routers/bookings.py:55-71`, `app/routers/bookings.py:103-118`  
@@ -79,7 +79,7 @@ This report outlines the bugs identified based on the API contract specified in 
 - **Impact:** The system permitted more than 20 concurrent `POST /bookings` requests within 60 seconds, bypassing the intended limit.
 - **Fix:** Bucket operations (read, trim, append, write) are now guarded with a lock to ensure thread safety.
 
-## 8\. Reference codes are not unique under concurrency or restart
+## 8. Reference codes are not unique under concurrency or restart
 
 <<<<<<< Updated upstream
 - Files/lines: `app/services/reference.py:8-21`, `app/models.py:55`  
@@ -102,7 +102,7 @@ This report outlines the bugs identified based on the API contract specified in 
 - **Impact:** Statistics were incorrect after an app restart, when processing existing data, after failed partial state updates, or during concurrent bursts that lost updates in `_stats`.
 - **Fix:** Room statistics are now computed dynamically from `Booking` rows upon request, ensuring an accurate and consistent state with the database.
 
-## 10\. Usage-report cache is stale after booking creation
+## 10. Usage-report cache is stale after booking creation
 
 <<<<<<< Updated upstream
 - Files/lines: `app/routers/bookings.py:120-122`, `app/routers/admin.py:25-27`, `app/cache.py:12-22`  
@@ -117,7 +117,7 @@ This report outlines the bugs identified based on the API contract specified in 
 - **Fix:** The organization's usage report cache is now explicitly invalidated upon successful booking creation.
 >>>>>>> Stashed changes
 
-## 11\. Availability cache is stale after cancellation
+## 11. Availability cache is stale after cancellation
 
 <<<<<<< Updated upstream
 - Files/lines: `app/routers/bookings.py:216-218`, `app/routers/rooms.py:69-100`, `app/cache.py:25-34`  
