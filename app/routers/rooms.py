@@ -3,6 +3,8 @@ from datetime import datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 
 from .. import cache
 from ..auth import get_current_user, require_admin
@@ -45,6 +47,10 @@ def create_room(
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
+    existing = db.query(Room).filter(Room.org_id == admin.org_id, Room.name == payload.name).first()
+    if existing:
+        raise AppError(409, "ROOM_NAME_TAKEN", "Room name is already taken in this organization")
+
     room = Room(
         org_id=admin.org_id,
         name=payload.name,
@@ -52,7 +58,11 @@ def create_room(
         hourly_rate_cents=payload.hourly_rate_cents,
     )
     db.add(room)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise AppError(409, "ROOM_NAME_TAKEN", "Room name is already taken in this organization")
     db.refresh(room)
     return _serialize_room(room)
 
@@ -107,9 +117,17 @@ def room_stats(
     user: User = Depends(get_current_user),
 ):
     room = _get_org_room(db, room_id, user.org_id)
-    current = stats.get(room.id)
+    result = (
+        db.query(
+            func.count(Booking.id),
+            func.coalesce(func.sum(Booking.price_cents), 0)
+        )
+        .filter(Booking.room_id == room.id, Booking.status == "confirmed")
+        .first()
+    )
+    count, revenue = result if result else (0, 0)
     return {
         "room_id": room.id,
-        "total_confirmed_bookings": current["count"],
-        "total_revenue_cents": current["revenue"],
+        "total_confirmed_bookings": count,
+        "total_revenue_cents": int(revenue),
     }
