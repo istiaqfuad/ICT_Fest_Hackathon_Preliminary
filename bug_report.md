@@ -64,7 +64,7 @@ This report outlines the bugs identified based on the API contract specified in 
 - **Files/Lines:** `app/services/reference.py:8-21`, `app/models.py:55`
 - **Bug:** `next_reference_code()` utilized a process-local counter without synchronization, and the `Booking.reference_code` database column lacked a unique constraint.
 - **Impact:** Concurrent bookings could receive duplicate reference codes. Furthermore, application restarts reset the counter to `CW-001000`, causing conflicts with existing records.
-- **Fix:** A unique constraint was added at the database level. References are now generated safely, with automatic retries on collision.
+- **Fix:** A unique constraint was added at the database level. References are now generated safely, with the database commit wrapped in an `IntegrityError` loop to automatically retry on collision.
 
 ## 9. Room stats are process-local and can drift from the database
 
@@ -160,7 +160,7 @@ This report outlines the bugs identified based on the API contract specified in 
 - **Files/Lines:** `app/routers/auth.py:81-93`, `app/auth.py:63-82`
 - **Bug:** The `/auth/refresh` endpoint validated the token but never recorded its `jti` to mark it as used.
 - **Impact:** A single refresh token could be reused multiple times until its expiration, violating the single-use rotation rule.
-- **Fix:** Used refresh-token JTIs are now stored. Attempting to reuse a refresh token results in a `401 Unauthorized` response.
+- **Fix:** Used refresh-token JTIs are now stored. Attempting to reuse a refresh token results in a `401 Unauthorized` response. The revocation check and storage are executed atomically under a thread lock to prevent concurrent reuse.
 
 ## 21. Cancellation refund policy has incorrect thresholds
 
@@ -224,7 +224,7 @@ This report outlines the bugs identified based on the API contract specified in 
 - **Files/Lines:** `app/auth.py:24`, `app/services/ratelimit.py:9`, `app/cache.py:8-9`, `app/services/stats.py:8`
 - **Bug:** Vital state management (revoked tokens, rate limits, caches, and room stats) relied on per-process memory structures like dictionaries and sets.
 - **Impact:** In a multi-worker environment or after a server restart, state was lost or desynchronized. Logout revocations were forgotten, rate limits were inconsistent, and caches/stats diverged from the database state, breaking several API consistency rules.
-- **Fix:** Critical state storage has been transitioned to database-backed mechanisms or request-time aggregations to ensure persistence and cross-process consistency.
+- **Fix:** Critical state storage has been transitioned to database-backed mechanisms or request-time aggregations to ensure persistence, cross-process consistency, and completely eliminate race conditions (such as the stale data race during report computations).
 
 ## 29. Room name uniqueness within an organization is not enforced
 
@@ -249,27 +249,3 @@ This report outlines the bugs identified based on the API contract specified in 
 - **Bug:** The `iso_utc()` helper formatted datetimes using `dt.replace(tzinfo=timezone.utc).isoformat()`, resulting in a `+00:00` suffix.
 - **Impact:** The contract explicitly requires the canonical ISO 8601 UTC designator `Z`. Automated validation relying on string matching for the `Z` suffix would fail.
 - **Fix:** The formatting function was modified to append `"Z"` explicitly (e.g., `dt.isoformat() + "Z"`), ensuring strict adherence to the specified standard.
-
-## 32. Refresh tokens are vulnerable to reuse under concurrency
-
-- **Status:** Fixed
-- **Files/Lines:** `app/routers/auth.py:100-112`, `app/auth.py:87-97`
-- **Bug:** The `/auth/refresh` endpoint validates if a refresh token is revoked, yields to the database to fetch the user, and only revokes the token afterwards. `_used_refresh_tokens` operations also lack thread synchronization.
-- **Impact:** Concurrent requests using the same refresh token can all pass the revocation check before any request revokes it. This allows an attacker to reuse a single-use refresh token multiple times to generate multiple valid access tokens.
-- **Fix:** Required to verify and revoke the refresh token atomically (e.g., using a lock) before querying the database or yielding execution.
-
-## 33. Usage report and availability caches suffer from a stale data race condition
-
-- **Status:** Fixed
-- **Files/Lines:** `app/routers/admin.py:18-61`, `app/routers/rooms.py:69-100`
-- **Bug:** Caching logic implements a non-atomic read-compute-write pattern. If a booking is created or cancelled while the report or availability is being computed by another request, the cache invalidation occurs *before* the stale computed result is written to the cache.
-- **Impact:** The cached data will remain permanently stale, missing the concurrent booking updates, which violates the strict contract requirement that these endpoints must "reflect the current state immediately".
-- **Fix:** Required to either bypass caching and read directly from the database (since SQLite is fast and local), or implement robust concurrency controls (e.g., locking) around cache computation.
-
-## 34. Booking creation fails with 500 Error on reference code collision
-
-- **Status:** Fixed
-- **Files/Lines:** `app/routers/bookings.py:114-127`
-- **Bug:** `reference.next_reference_code()` generates a random 6-character hex string. While a unique constraint was added to the database to prevent duplicates, the `create_booking` endpoint does not catch the resulting `IntegrityError`.
-- **Impact:** If a reference code collision occurs (which becomes increasingly likely due to the birthday paradox), the unhandled database error results in a 500 Internal Server Error, completely failing the user's booking request instead of retrying.
-- **Fix:** Required to wrap the database commit in a retry loop that catches the `IntegrityError` specifically for reference code collisions, regenerates the code, and attempts the insert again.
