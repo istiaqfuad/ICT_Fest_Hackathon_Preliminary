@@ -15,6 +15,7 @@ from ..serializers import serialize_booking
 from ..services import notifications, ratelimit, reference, stats
 from ..services.refunds import log_refund
 from ..timeutils import iso_utc, parse_input_datetime
+from decimal import Decimal, ROUND_HALF_UP
 
 router = APIRouter(tags=["bookings"])
 
@@ -178,7 +179,6 @@ def get_booking(
     ]
     return response
 
-
 @router.post("/bookings/{booking_id}/cancel")
 def cancel_booking(
     booking_id: int,
@@ -191,6 +191,7 @@ def cancel_booking(
         .filter(Booking.id == booking_id, Room.org_id == user.org_id)
         .first()
     )
+    
     if booking is None:
         raise AppError(404, "BOOKING_NOT_FOUND", "Booking not found")
     if user.role != "admin" and booking.user_id != user.id:
@@ -199,22 +200,35 @@ def cancel_booking(
     if booking.status == "cancelled":
         raise AppError(409, "ALREADY_CANCELLED", "Booking already cancelled")
 
+    # Atomic step 1: Update state in session memory safely
+    rows_updated = (
+        db.query(Booking)
+        .filter(Booking.id == booking_id, Booking.status == "confirmed")
+        .update({"status": "cancelled"}, synchronize_session="evaluate")
+    )
+    
+    if rows_updated == 0:
+        db.rollback()
+        raise AppError(409, "ALREADY_CANCELLED", "Booking already cancelled")
+
     now = datetime.utcnow()
     notice = booking.start_time - now
-    notice_hours = int(notice.total_seconds() // 3600)
-    if notice_hours > 48:
+    
+    if notice >= timedelta(hours=48):
         refund_percent = 100
     elif notice >= timedelta(hours=24):
         refund_percent = 50
     else:
-        refund_percent = 50
+        refund_percent = 0
 
-    refund_amount_cents = round(booking.price_cents * (refund_percent / 100.0))
+    refund_amount_cents = (booking.price_cents * refund_percent + 50) // 100
 
-    log_refund(db, booking, refund_percent)
+    # Atomic step 2: Stage the log record inside the exact same session transaction
+    log_refund(db, booking, refund_percent, amount_cents=refund_amount_cents)
 
     _settlement_pause()
-    booking.status = "cancelled"
+    
+    # Atomic step 3: Commit BOTH the status update and the refund log together safely
     db.commit()
 
     stats.record_cancel(booking.room_id, booking.price_cents)
@@ -227,3 +241,4 @@ def cancel_booking(
         "refund_percent": refund_percent,
         "refund_amount_cents": refund_amount_cents,
     }
+
