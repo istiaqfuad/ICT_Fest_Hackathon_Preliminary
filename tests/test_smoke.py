@@ -40,6 +40,15 @@ def _register_and_login(org: str, username: str = "alice") -> dict[str, str]:
     return {"Authorization": f"Bearer {login.json()['access_token']}"}
 
 
+def _login_tokens(org: str, username: str = "alice") -> dict[str, str]:
+    login = client.post(
+        "/auth/login",
+        json={"org_name": org, "username": username, "password": "pw12345"},
+    )
+    assert login.status_code == 200
+    return login.json()
+
+
 def _create_room(headers: dict[str, str], name: str = "Focus Room") -> int:
     room = client.post(
         "/rooms",
@@ -187,3 +196,28 @@ def test_cancellation_notice_uses_correct_time_thresholds():
     cancelled = client.post(f"/bookings/{booking.json()['id']}/cancel", headers=headers)
     assert cancelled.status_code == 200
     assert cancelled.json()["refund_percent"] == 0
+
+
+def test_logout_revokes_existing_refresh_tokens_for_the_user():
+    org = _org_name("logout")
+    _register_and_login(org)
+    first_login = _login_tokens(org)
+    second_login = _login_tokens(org)
+
+    logout = client.post(
+        "/auth/logout",
+        headers={"Authorization": f"Bearer {second_login['access_token']}"},
+    )
+    assert logout.status_code == 200
+
+    refreshed = client.post(
+        "/auth/refresh",
+        json={"refresh_token": first_login["refresh_token"]},
+    )
+    assert refreshed.status_code == 401
+
+    refreshed = client.post(
+        "/auth/refresh",
+        json={"refresh_token": second_login["refresh_token"]},
+    )
+    assert refreshed.status_code == 401
