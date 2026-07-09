@@ -24,6 +24,9 @@ from .models import User
 _revoked_tokens: set[str] = set()
 _used_refresh_tokens: set[str] = set()
 
+import threading
+_refresh_lock = threading.Lock()
+
 _PBKDF2_ROUNDS = 100_000
 
 
@@ -84,16 +87,15 @@ def decode_token(token: str) -> dict:
     except jwt.PyJWTError:
         raise AppError(401, "UNAUTHORIZED", "Invalid or expired token")
 
-def revoke_refresh_token(jti: str) -> None:
-    _used_refresh_tokens.add(jti)
-
+def check_and_revoke_refresh(jti: str) -> bool:
+    with _refresh_lock:
+        if jti in _used_refresh_tokens:
+            return True
+        _used_refresh_tokens.add(jti)
+        return False
 
 def revoke_access_token(payload: dict) -> None:
     _revoked_tokens.add(payload["jti"])
-
-
-def is_refresh_revoked(jti: str) -> bool:
-    return jti in _used_refresh_tokens
 
 
 def get_token_payload(request: Request) -> dict:

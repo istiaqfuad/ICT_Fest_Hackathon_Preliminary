@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from .. import cache
 from ..auth import get_current_user
@@ -111,17 +112,29 @@ def create_booking(
     _check_quota(db, user.id, now, start)
 
     price_cents = room.hourly_rate_cents * duration_hours
-    booking = Booking(
-        room_id=room.id,
-        user_id=user.id,
-        start_time=start,
-        end_time=end,
-        status="confirmed",
-        reference_code=reference.next_reference_code(),
-        price_cents=price_cents,
-        created_at=now,
-    )
-    db.add(booking)
+    
+    for _ in range(5):
+        booking = Booking(
+            room_id=room.id,
+            user_id=user.id,
+            start_time=start,
+            end_time=end,
+            status="confirmed",
+            reference_code=reference.next_reference_code(),
+            price_cents=price_cents,
+            created_at=now,
+        )
+        db.add(booking)
+        try:
+            with db.begin_nested():
+                db.flush()
+        except IntegrityError:
+            db.expunge(booking)
+            continue
+        break
+    else:
+        raise AppError(500, "INTERNAL_ERROR", "Failed to generate unique reference code")
+
     db.commit()
     db.refresh(booking)
 

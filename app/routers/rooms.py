@@ -76,10 +76,6 @@ def availability(
 ):
     room = _get_org_room(db, room_id, user.org_id)
 
-    cached = cache.get_availability(room.id, date)
-    if cached is not None:
-        return cached
-
     try:
         day = datetime.strptime(date, "%Y-%m-%d").date()
     except ValueError:
@@ -106,7 +102,6 @@ def availability(
             for b in bookings
         ],
     }
-    cache.set_availability(room.id, date, result)
     return result
 
 

@@ -11,8 +11,7 @@ from ..auth import (
     hash_password,
     revoke_access_token,
     verify_password,
-    revoke_refresh_token,
-    is_refresh_revoked,
+    check_and_revoke_refresh,
 )
 from ..database import get_db
 from ..errors import AppError
@@ -99,7 +98,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
 @router.post("/refresh")
 def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
     data = decode_token(payload.refresh_token)
-    if is_refresh_revoked(data.get("jti")):
+    if check_and_revoke_refresh(data.get("jti")):
         raise AppError(401, "UNAUTHORIZED", "Refresh token has been revoked")
 
     if data.get("type") != "refresh":
@@ -107,9 +106,6 @@ def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == int(data["sub"])).first()
     if user is None:
         raise AppError(401, "UNAUTHORIZED", "Unknown user")
-    
-    # revoke the used refresh token to prevent reuse
-    revoke_refresh_token(data.get("jti"))
     return {
         "access_token": create_access_token(user),
         "refresh_token": create_refresh_token(user),

@@ -28,48 +28,27 @@ This report outlines the bugs identified based on the API contract specified in 
 
 ## 4. Back-to-back bookings are treated as conflicts
 
-<<<<<<< Updated upstream
-- Files/lines: `app/routers/bookings.py:42-51`  
-- Bug: `_has_conflict()` uses `b.start_time <= end and start <= b.end_time`.  
-- Impact: A booking ending at 11:00 blocks a new booking starting at 11:00, but the contract explicitly allows back-to-back bookings.  
-- Fix: Use the strict overlap predicate from the spec: `existing.start_time < new_end and new_start < existing.end_time`.
-=======
 - **Status:** Fixed
 - **Files/Lines:** `app/routers/bookings.py:42-51`
 - **Bug:** The conflict detection logic `_has_conflict()` used an inclusive boundary check: `b.start_time <= end and start <= b.end_time`.
 - **Impact:** A booking ending at 11:00 would incorrectly block a new booking starting at 11:00, despite the contract explicitly allowing back-to-back bookings.
 - **Fix:** Implemented strict overlap boundaries per the specification: `existing.start_time < new_end and new_start < existing.end_time`.
->>>>>>> Stashed changes
 
 ## 5. Double-booking protection is not concurrency-safe
 
-<<<<<<< Updated upstream
-- Files/lines: `app/routers/bookings.py:42-52`, `app/routers/bookings.py:100-118`, `app/models.py:46-57`  
-- Bug: Conflict detection is a read-before-write check with no transaction-level serialization or database constraint. The sleep in `_pricing_warmup()` widens the race window.  
-- Impact: Concurrent requests can both see no conflict and commit overlapping confirmed bookings for the same room.  
-- Fix: Serialize booking creation per room/time range, or enforce the invariant inside a transaction with an application lock suitable for SQLite. Keep the conflict check and insert atomic.
-=======
 - **Status:** Fixed
 - **Files/Lines:** `app/routers/bookings.py:42-52`, `app/routers/bookings.py:100-118`, `app/models.py:46-57`
 - **Bug:** Conflict detection was handled as a read-before-write check without transaction-level serialization or database constraints. A simulated delay (`_pricing_warmup()`) widened this race condition window.
 - **Impact:** Concurrent requests could bypass conflict checks and commit overlapping confirmed bookings for the same room.
 - **Fix:** Booking creation is now serialized per room and time range. The conflict check and subsequent insert are executed atomically within a database transaction.
->>>>>>> Stashed changes
 
 ## 6. Quota enforcement is not concurrency-safe
 
-<<<<<<< Updated upstream
-- Files/lines: `app/routers/bookings.py:55-71`, `app/routers/bookings.py:103-118`  
-- Bug: Quota is counted before insert without any lock or transaction protection. `_quota_audit()` widens the race window.  
-- Impact: Concurrent requests can all see fewer than 3 bookings and create more than 3 confirmed bookings in the next 24 hours.  
-- Fix: Perform quota check and booking insert under the same per-user critical section or transaction.
-=======
 - **Status:** Fixed
 - **Files/Lines:** `app/routers/bookings.py:55-71`, `app/routers/bookings.py:103-118`
 - **Bug:** The booking quota was tallied prior to insertion without any locking or transaction isolation. The `_quota_audit()` delay exacerbated the race condition.
 - **Impact:** Concurrent requests could all read a quota count below the limit of 3, allowing a user to create more than 3 confirmed bookings in a 24-hour period.
 - **Fix:** Both the quota verification and the booking insertion are now executed within the same per-user transaction critical section.
->>>>>>> Stashed changes
 
 ## 7. Rate limiter is not concurrency-safe
 
@@ -81,18 +60,11 @@ This report outlines the bugs identified based on the API contract specified in 
 
 ## 8. Reference codes are not unique under concurrency or restart
 
-<<<<<<< Updated upstream
-- Files/lines: `app/services/reference.py:8-21`, `app/models.py:55`  
-- Bug: `next_reference_code()` reads and writes a process-local counter without locking, and `Booking.reference_code` has no unique constraint.  
-- Impact: Concurrent bookings can receive the same reference code. After a process restart, the counter resets to `CW-001000`, which can duplicate existing rows.  
-- Fix: Add a uniqueness guarantee at the database level and generate references from a transaction-safe source, retrying on collision.
-=======
 - **Status:** Fixed
 - **Files/Lines:** `app/services/reference.py:8-21`, `app/models.py:55`
 - **Bug:** `next_reference_code()` utilized a process-local counter without synchronization, and the `Booking.reference_code` database column lacked a unique constraint.
 - **Impact:** Concurrent bookings could receive duplicate reference codes. Furthermore, application restarts reset the counter to `CW-001000`, causing conflicts with existing records.
 - **Fix:** A unique constraint was added at the database level. References are now generated safely, with automatic retries on collision.
->>>>>>> Stashed changes
 
 ## 9. Room stats are process-local and can drift from the database
 
@@ -104,33 +76,19 @@ This report outlines the bugs identified based on the API contract specified in 
 
 ## 10. Usage-report cache is stale after booking creation
 
-<<<<<<< Updated upstream
-- Files/lines: `app/routers/bookings.py:120-122`, `app/routers/admin.py:25-27`, `app/cache.py:12-22`  
-- Bug: Creating a booking invalidates availability cache but not usage-report cache.  
-- Impact: `GET /admin/usage-report` may return a stale result immediately after a booking is created, violating the "current state immediately" rule.  
-- Fix: Invalidate the organization's report cache after successful booking creation.
-=======
 - **Status:** Fixed
 - **Files/Lines:** `app/routers/bookings.py:120-122`, `app/routers/admin.py:25-27`, `app/cache.py:12-22`
 - **Bug:** Creating a new booking correctly invalidated the availability cache, but failed to invalidate the usage-report cache.
 - **Impact:** Calls to `GET /admin/usage-report` could return stale results immediately after a booking was made, violating the requirement to reflect current state immediately.
 - **Fix:** The organization's usage report cache is now explicitly invalidated upon successful booking creation.
->>>>>>> Stashed changes
 
 ## 11. Availability cache is stale after cancellation
 
-<<<<<<< Updated upstream
-- Files/lines: `app/routers/bookings.py:216-218`, `app/routers/rooms.py:69-100`, `app/cache.py:25-34`  
-- Bug: Cancelling a booking invalidates report cache but not availability cache.  
-- Impact: `GET /rooms/{id}/availability` can continue showing a cancelled booking as busy.  
-- Fix: Invalidate availability for the cancelled booking's room and start date after cancellation.
-=======
 - **Status:** Fixed
 - **Files/Lines:** `app/routers/bookings.py:216-218`, `app/routers/rooms.py:69-100`, `app/cache.py:25-34`
 - **Bug:** Cancelling a booking invalidated the report cache, but neglected to invalidate the availability cache.
 - **Impact:** The `GET /rooms/{id}/availability` endpoint continued to show a cancelled booking's time slot as busy.
 - **Fix:** Availability cache for the specific room and date is now correctly invalidated upon booking cancellation.
->>>>>>> Stashed changes
 
 ## 12. Usage report accepts dates only, not ISO 8601 datetimes
 
@@ -291,3 +249,27 @@ This report outlines the bugs identified based on the API contract specified in 
 - **Bug:** The `iso_utc()` helper formatted datetimes using `dt.replace(tzinfo=timezone.utc).isoformat()`, resulting in a `+00:00` suffix.
 - **Impact:** The contract explicitly requires the canonical ISO 8601 UTC designator `Z`. Automated validation relying on string matching for the `Z` suffix would fail.
 - **Fix:** The formatting function was modified to append `"Z"` explicitly (e.g., `dt.isoformat() + "Z"`), ensuring strict adherence to the specified standard.
+
+## 32. Refresh tokens are vulnerable to reuse under concurrency
+
+- **Status:** Fixed
+- **Files/Lines:** `app/routers/auth.py:100-112`, `app/auth.py:87-97`
+- **Bug:** The `/auth/refresh` endpoint validates if a refresh token is revoked, yields to the database to fetch the user, and only revokes the token afterwards. `_used_refresh_tokens` operations also lack thread synchronization.
+- **Impact:** Concurrent requests using the same refresh token can all pass the revocation check before any request revokes it. This allows an attacker to reuse a single-use refresh token multiple times to generate multiple valid access tokens.
+- **Fix:** Required to verify and revoke the refresh token atomically (e.g., using a lock) before querying the database or yielding execution.
+
+## 33. Usage report and availability caches suffer from a stale data race condition
+
+- **Status:** Fixed
+- **Files/Lines:** `app/routers/admin.py:18-61`, `app/routers/rooms.py:69-100`
+- **Bug:** Caching logic implements a non-atomic read-compute-write pattern. If a booking is created or cancelled while the report or availability is being computed by another request, the cache invalidation occurs *before* the stale computed result is written to the cache.
+- **Impact:** The cached data will remain permanently stale, missing the concurrent booking updates, which violates the strict contract requirement that these endpoints must "reflect the current state immediately".
+- **Fix:** Required to either bypass caching and read directly from the database (since SQLite is fast and local), or implement robust concurrency controls (e.g., locking) around cache computation.
+
+## 34. Booking creation fails with 500 Error on reference code collision
+
+- **Status:** Fixed
+- **Files/Lines:** `app/routers/bookings.py:114-127`
+- **Bug:** `reference.next_reference_code()` generates a random 6-character hex string. While a unique constraint was added to the database to prevent duplicates, the `create_booking` endpoint does not catch the resulting `IntegrityError`.
+- **Impact:** If a reference code collision occurs (which becomes increasingly likely due to the birthday paradox), the unhandled database error results in a 500 Internal Server Error, completely failing the user's booking request instead of retrying.
+- **Fix:** Required to wrap the database commit in a retry loop that catches the `IntegrityError` specifically for reference code collisions, regenerates the code, and attempts the insert again.

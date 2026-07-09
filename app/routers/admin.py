@@ -22,10 +22,6 @@ def usage_report(
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
-    cached = cache.get_report(admin.org_id, frm, to)
-    if cached is not None:
-        return cached
-
     try:
         range_start = parse_input_datetime(frm)
         range_end = parse_input_datetime(to)
@@ -57,9 +53,7 @@ def usage_report(
         )
 
     result = {"from": iso_utc(range_start), "to": iso_utc(range_end), "rooms": room_rows}
-    cache.set_report(admin.org_id, frm, to, result)
     return result
-
 @router.get("/export")
 def export(
     room_id: int | None = Query(None),
