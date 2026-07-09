@@ -15,6 +15,7 @@ from ..serializers import serialize_booking
 from ..services import notifications, ratelimit, reference, stats
 from ..services.refunds import log_refund
 from ..timeutils import iso_utc, parse_input_datetime
+from decimal import Decimal, ROUND_HALF_UP
 
 router = APIRouter(tags=["bookings"])
 
@@ -125,7 +126,6 @@ def create_booking(
 
     return serialize_booking(booking)
 
-
 @router.get("/bookings")
 def list_bookings(
     page: int = Query(1, ge=1),
@@ -135,12 +135,17 @@ def list_bookings(
 ):
     base = db.query(Booking).filter(Booking.user_id == user.id)
     total = base.count()
+    
+    # FIX 1: Sort by start_time ascending (.asc())
+    # FIX 2: Offset formula must be (page - 1) * limit so page 1 starts at 0
+    # FIX 3: Apply the dynamic requested 'limit' instead of hardcoded 10
     items = (
-        base.order_by(Booking.start_time.desc(), Booking.id.asc())
-        .offset(page * limit)
-        .limit(10)
+        base.order_by(Booking.start_time.asc(), Booking.id.asc())
+        .offset((page - 1) * limit)
+        .limit(limit)
         .all()
     )
+    
     return {
         "items": [serialize_booking(b) for b in items],
         "page": page,
@@ -177,7 +182,6 @@ def get_booking(
     ]
     return response
 
-
 @router.post("/bookings/{booking_id}/cancel")
 def cancel_booking(
     booking_id: int,
@@ -190,12 +194,24 @@ def cancel_booking(
         .filter(Booking.id == booking_id, Room.org_id == user.org_id)
         .first()
     )
+    
     if booking is None:
         raise AppError(404, "BOOKING_NOT_FOUND", "Booking not found")
     if user.role != "admin" and booking.user_id != user.id:
         raise AppError(404, "BOOKING_NOT_FOUND", "Booking not found")
 
     if booking.status == "cancelled":
+        raise AppError(409, "ALREADY_CANCELLED", "Booking already cancelled")
+
+    # Atomic step 1: Update state in session memory safely
+    rows_updated = (
+        db.query(Booking)
+        .filter(Booking.id == booking_id, Booking.status == "confirmed")
+        .update({"status": "cancelled"}, synchronize_session="evaluate")
+    )
+    
+    if rows_updated == 0:
+        db.rollback()
         raise AppError(409, "ALREADY_CANCELLED", "Booking already cancelled")
 
     now = datetime.utcnow()
@@ -207,12 +223,14 @@ def cancel_booking(
     else:
         refund_percent = 0
 
-    refund_amount_cents = round(booking.price_cents * (refund_percent / 100.0))
+    refund_amount_cents = (booking.price_cents * refund_percent + 50) // 100
 
-    log_refund(db, booking, refund_percent)
+    # Atomic step 2: Stage the log record inside the exact same session transaction
+    log_refund(db, booking, refund_percent, amount_cents=refund_amount_cents)
 
     _settlement_pause()
-    booking.status = "cancelled"
+    
+    # Atomic step 3: Commit BOTH the status update and the refund log together safely
     db.commit()
 
     stats.record_cancel(booking.room_id, booking.price_cents)
@@ -225,3 +243,4 @@ def cancel_booking(
         "refund_percent": refund_percent,
         "refund_amount_cents": refund_amount_cents,
     }
+

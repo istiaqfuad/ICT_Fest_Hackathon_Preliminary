@@ -60,7 +60,6 @@ def usage_report(
     cache.set_report(admin.org_id, frm, to, result)
     return result
 
-
 @router.get("/export")
 def export(
     room_id: int | None = Query(None),
@@ -68,5 +67,35 @@ def export(
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
-    csv_body = generate_export(db, admin.org_id, admin.id, room_id, include_all)
-    return Response(content=csv_body, media_type="text/csv")
+    # If a room was requested, ensure it belongs to the admin's organization.
+    if room_id is not None:
+        room = (
+            db.query(Room)
+            .filter(
+                Room.id == room_id,
+                Room.org_id == admin.org_id,
+            )
+            .first()
+        )
+
+        # Business Rule #9:
+        # Cross-org resources must behave as non-existent.
+        if room is None:
+            raise AppError(
+                404,
+                "ROOM_NOT_FOUND",
+                "Room not found",
+            )
+
+    csv_body = generate_export(
+        db,
+        admin.org_id,
+        admin.id,
+        room_id,
+        include_all,
+    )
+
+    return Response(
+        content=csv_body,
+        media_type="text/csv",
+    )
