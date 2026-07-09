@@ -10,6 +10,8 @@ from ..auth import (
     hash_password,
     revoke_access_token,
     verify_password,
+    revoke_refresh_token,
+    is_refresh_revoked,
 )
 from ..database import get_db
 from ..errors import AppError
@@ -35,12 +37,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         .first()
     )
     if existing is not None:
-        return {
-            "user_id": existing.id,
-            "org_id": org.id,
-            "username": existing.username,
-            "role": existing.role,
-        }
+       raise AppError(409, "USERNAME TAKEN", "Username already taken")
 
     user = User(
         org_id=org.id,
@@ -81,16 +78,23 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
 @router.post("/refresh")
 def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
     data = decode_token(payload.refresh_token)
+    if is_refresh_revoked(data.get("jti")):
+        raise AppError(401, "UNAUTHORIZED", "Refresh token has been revoked")
+
     if data.get("type") != "refresh":
         raise AppError(401, "UNAUTHORIZED", "Wrong token type")
     user = db.query(User).filter(User.id == int(data["sub"])).first()
     if user is None:
         raise AppError(401, "UNAUTHORIZED", "Unknown user")
+    
+    # revoke the used refresh token to prevent reuse
+    revoke_refresh_token(data.get("jti"))
     return {
         "access_token": create_access_token(user),
         "refresh_token": create_refresh_token(user),
         "token_type": "bearer",
     }
+
 
 
 @router.post("/logout")
