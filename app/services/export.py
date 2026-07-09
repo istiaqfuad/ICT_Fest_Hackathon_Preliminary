@@ -7,27 +7,38 @@ from sqlalchemy.orm import Session
 from ..models import Booking, Room
 from ..timeutils import iso_utc
 
+# Remove underscrore to match specification
 EXPORT_HEADER = [
     "id",
-    "reference_code",
-    "room_id",
-    "user_id",
-    "start_time",
-    "end_time",
+    "reference code",
+    "room id",
+    "user id",
+    "start time",
+    "end time",
     "status",
-    "price_cents",
+    "price cents",
 ]
 
 
-def fetch_bookings_raw(db: Session, room_id: int) -> list[Booking]:
-    """Load every booking for a single room, ordered by id."""
+def fetch_bookings_raw(
+    db: Session,
+    org_id: int,
+    room_id: int,
+) -> list[Booking]:
+    """
+    Load every booking for a room that belongs to the
+    administrator's organization. By filtering Org id and Booking room Id
+    """
     return (
         db.query(Booking)
-        .filter(Booking.room_id == room_id)
+        .join(Room)
+        .filter(
+            Booking.room_id == room_id,
+            Room.org_id == org_id,
+        )
         .order_by(Booking.id.asc())
         .all()
     )
-
 
 def _fetch_scoped(db: Session, org_id: int, user_id: int | None, room_id: int | None) -> list[Booking]:
     query = db.query(Booking).join(Room).filter(Room.org_id == org_id)
@@ -45,9 +56,20 @@ def generate_export(
     room_id: int | None,
     include_all: bool,
 ) -> str:
+    """
+    Generate a CSV export of bookings.
+
+    - include_all=True  -> export all bookings within the admin's organization.
+    - include_all=False -> export only the requesting user's bookings.
+    - room_id (optional) further restricts the export to a specific room.
+    """
+
     if include_all:
         if room_id is not None:
-            rows = fetch_bookings_raw(db, room_id)
+            # FIX:
+            # Scope the export by organization as well to prevent
+            # cross-organization data leakage.
+            rows = fetch_bookings_raw(db, org_id, room_id)
         else:
             rows = _fetch_scoped(db, org_id, None, None)
     else:
@@ -55,7 +77,9 @@ def generate_export(
 
     buffer = io.StringIO()
     writer = csv.writer(buffer)
+
     writer.writerow(EXPORT_HEADER)
+
     for b in rows:
         writer.writerow(
             [
@@ -69,4 +93,5 @@ def generate_export(
                 b.price_cents,
             ]
         )
+
     return buffer.getvalue()
