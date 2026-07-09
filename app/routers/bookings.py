@@ -123,7 +123,6 @@ def create_booking(
 
     return serialize_booking(booking)
 
-
 @router.get("/bookings")
 def list_bookings(
     page: int = Query(1, ge=1),
@@ -133,12 +132,17 @@ def list_bookings(
 ):
     base = db.query(Booking).filter(Booking.user_id == user.id)
     total = base.count()
+    
+    # FIX 1: Sort by start_time ascending (.asc())
+    # FIX 2: Offset formula must be (page - 1) * limit so page 1 starts at 0
+    # FIX 3: Apply the dynamic requested 'limit' instead of hardcoded 10
     items = (
-        base.order_by(Booking.start_time.desc(), Booking.id.asc())
-        .offset(page * limit)
-        .limit(10)
+        base.order_by(Booking.start_time.asc(), Booking.id.asc())
+        .offset((page - 1) * limit)
+        .limit(limit)
         .all()
     )
+    
     return {
         "items": [serialize_booking(b) for b in items],
         "page": page,
