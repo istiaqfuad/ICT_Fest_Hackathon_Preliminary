@@ -20,8 +20,8 @@ class RefreshRequest(BaseModel):
 
 class RoomCreateRequest(BaseModel):
     name: str
-    capacity: int
-    hourly_rate_cents: int
+    capacity: int = Field(ge=1)
+    hourly_rate_cents: int = Field(ge=0)
 
 
 class BookingCreateRequest(BaseModel):

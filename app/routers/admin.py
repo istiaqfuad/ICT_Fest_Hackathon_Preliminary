@@ -1,5 +1,4 @@
 """Administrative reporting and export endpoints."""
-from datetime import datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
@@ -11,6 +10,7 @@ from ..database import get_db
 from ..errors import AppError
 from ..models import Booking, Room, User
 from ..services.export import generate_export
+from ..timeutils import iso_utc, parse_input_datetime
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -27,13 +27,12 @@ def usage_report(
         return cached
 
     try:
-        from_date = datetime.strptime(frm, "%Y-%m-%d").date()
-        to_date = datetime.strptime(to, "%Y-%m-%d").date()
+        range_start = parse_input_datetime(frm)
+        range_end = parse_input_datetime(to)
     except ValueError:
         raise AppError(400, "INVALID_BOOKING_WINDOW", "Invalid date range")
-
-    range_start = datetime.combine(from_date, time.min)
-    range_end = datetime.combine(to_date + timedelta(days=1), time.min)
+    if range_end < range_start:
+        raise AppError(400, "INVALID_BOOKING_WINDOW", "Invalid date range")
 
     rooms = db.query(Room).filter(Room.org_id == admin.org_id).order_by(Room.id.asc()).all()
     room_rows = []
@@ -44,7 +43,7 @@ def usage_report(
                 Booking.room_id == room.id,
                 Booking.status == "confirmed",
                 Booking.start_time >= range_start,
-                Booking.start_time < range_end,
+                Booking.start_time <= range_end,
             )
             .all()
         )
@@ -57,7 +56,7 @@ def usage_report(
             }
         )
 
-    result = {"from": frm, "to": to, "rooms": room_rows}
+    result = {"from": iso_utc(range_start), "to": iso_utc(range_end), "rooms": room_rows}
     cache.set_report(admin.org_id, frm, to, result)
     return result
 
