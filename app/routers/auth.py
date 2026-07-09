@@ -1,6 +1,7 @@
 """Authentication endpoints: register, login, refresh, logout."""
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from ..auth import (
     create_access_token,
@@ -23,13 +24,25 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/register", status_code=201)
 def register(payload: RegisterRequest, db: Session = Depends(get_db)):
+    created_org = False
     org = db.query(Organization).filter(Organization.name == payload.org_name).first()
-    role = "admin" if org is None else "member"
+    
     if org is None:
         org = Organization(name=payload.org_name)
         db.add(org)
-        db.commit()
-        db.refresh(org)
+        try:
+            db.commit()
+            db.refresh(org)
+            created_org = True
+        except IntegrityError:
+            db.rollback()
+            org = (
+                db.query(Organization)
+                .filter(Organization.name == payload.org_name)
+                .first()
+            )
+            
+    role = "admin" if created_org else "member"
 
     existing = (
         db.query(User)
@@ -37,7 +50,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         .first()
     )
     if existing is not None:
-       raise AppError(409, "USERNAME TAKEN", "Username already taken")
+       raise AppError(409, "USERNAME_TAKEN", "Username already taken")
 
     user = User(
         org_id=org.id,
@@ -46,8 +59,16 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         role=role,
     )
     db.add(user)
-    db.commit()
-    db.refresh(user)
+    try:
+        db.commit()
+        db.refresh(user)
+    except IntegrityError:
+        db.rollback()
+        raise AppError(
+            409,
+            "USERNAME_TAKEN",
+            "Username already taken",
+        )
     return {
         "user_id": user.id,
         "org_id": org.id,
