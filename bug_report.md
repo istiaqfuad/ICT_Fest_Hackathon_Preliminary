@@ -26,22 +26,25 @@ This report is based on the API contract in `ICT_Fest_Hackathon_Preliminary.md` 
 - Impact: Zero-hour or negative-duration bookings can be accepted, producing zero or negative prices.  
 - Fix: Reject `end <= start`, then require `1 <= duration_hours <= 8`.
 
-## 4\. Back-to-back bookings are treated as conflicts
+## 4. Back-to-back bookings are treated as conflicts
 
+- Status: Fixed
 - Files/lines: `app/routers/bookings.py:42-51`  
 - Bug: `_has_conflict()` uses `b.start_time <= end and start <= b.end_time`.  
 - Impact: A booking ending at 11:00 blocks a new booking starting at 11:00, but the contract explicitly allows back-to-back bookings.  
 - Fix: Use the strict overlap predicate from the spec: `existing.start_time < new_end and new_start < existing.end_time`.
 
-## 5\. Double-booking protection is not concurrency-safe
+## 5. Double-booking protection is not concurrency-safe
 
+- Status: Fixed
 - Files/lines: `app/routers/bookings.py:42-52`, `app/routers/bookings.py:100-118`, `app/models.py:46-57`  
 - Bug: Conflict detection is a read-before-write check with no transaction-level serialization or database constraint. The sleep in `_pricing_warmup()` widens the race window.  
 - Impact: Concurrent requests can both see no conflict and commit overlapping confirmed bookings for the same room.  
 - Fix: Serialize booking creation per room/time range, or enforce the invariant inside a transaction with an application lock suitable for SQLite. Keep the conflict check and insert atomic.
 
-## 6\. Quota enforcement is not concurrency-safe
+## 6. Quota enforcement is not concurrency-safe
 
+- Status: Fixed
 - Files/lines: `app/routers/bookings.py:55-71`, `app/routers/bookings.py:103-118`  
 - Bug: Quota is counted before insert without any lock or transaction protection. `_quota_audit()` widens the race window.  
 - Impact: Concurrent requests can all see fewer than 3 bookings and create more than 3 confirmed bookings in the next 24 hours.  
@@ -55,8 +58,9 @@ This report is based on the API contract in `ICT_Fest_Hackathon_Preliminary.md` 
 - Impact: More than 20 concurrent `POST /bookings` requests in 60 seconds can be accepted.  
 - Fix: Guard bucket read/trim/append/write with a lock, or use an atomic shared rate limiter.
 
-## 8\. Reference codes are not unique under concurrency or restart
+## 8. Reference codes are not unique under concurrency or restart
 
+- Status: Fixed
 - Files/lines: `app/services/reference.py:8-21`, `app/models.py:55`  
 - Bug: `next_reference_code()` reads and writes a process-local counter without locking, and `Booking.reference_code` has no unique constraint.  
 - Impact: Concurrent bookings can receive the same reference code. After a process restart, the counter resets to `CW-001000`, which can duplicate existing rows.  
@@ -70,15 +74,17 @@ This report is based on the API contract in `ICT_Fest_Hackathon_Preliminary.md` 
 - Impact: Stats are wrong after app restart, after existing data is loaded, after failed partial side effects, and after concurrent bursts that lose updates in `_stats`.  
 - Fix: Compute stats from `Booking` rows on each request, or maintain counters transactionally and concurrency-safely in the database.
 
-## 10\. Usage-report cache is stale after booking creation
+## 10. Usage-report cache is stale after booking creation
 
+- Status: Fixed
 - Files/lines: `app/routers/bookings.py:120-122`, `app/routers/admin.py:25-27`, `app/cache.py:12-22`  
 - Bug: Creating a booking invalidates availability cache but not usage-report cache.  
 - Impact: `GET /admin/usage-report` may return a stale result immediately after a booking is created, violating the "current state immediately" rule.  
 - Fix: Invalidate the organization's report cache after successful booking creation.
 
-## 11\. Availability cache is stale after cancellation
+## 11. Availability cache is stale after cancellation
 
+- Status: Fixed
 - Files/lines: `app/routers/bookings.py:216-218`, `app/routers/rooms.py:69-100`, `app/cache.py:25-34`  
 - Bug: Cancelling a booking invalidates report cache but not availability cache.  
 - Impact: `GET /rooms/{id}/availability` can continue showing a cancelled booking as busy.  
